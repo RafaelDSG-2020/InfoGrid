@@ -1,7 +1,7 @@
-from sqlalchemy import (
-    Column, String, Integer, Boolean, Text, ForeignKey, Table, DateTime, create_engine
-)
-from sqlalchemy.orm import relationship, declarative_base, sessionmaker, registry
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy.orm import registry, relationship
+from sqlalchemy.dialects.postgresql import JSON
+
 
 table_registry = registry()
 
@@ -32,22 +32,39 @@ responsaveis_topicos_kafka = Table(
     Column('topico_kafka_id', Integer, ForeignKey('topicos_kafka.id'), primary_key=True),
 )
 
+
 # Model Responsavel
 class Responsavel(Base):
     __tablename__ = 'responsaveis'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nome = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     cargo = Column(String(100), nullable=True)
     telefone = Column(String(15), nullable=True)
 
+    # Relacionamento com Database
+    databases = relationship(
+        'Database', secondary=responsaveis_databases, back_populates="responsaveis"
+    )
+
+    # Relacionamento com Tabela
+    tabelas = relationship(
+        'Tabela', secondary=responsaveis_tabelas, back_populates="responsaveis"
+    )
+
+    # Relacionamento com TopicoKafka
+    topicos_kafka = relationship(
+        'TopicoKafka', secondary=responsaveis_topicos_kafka, back_populates="responsaveis"
+    )
+
+
 # Model Database
 class Database(Base):
     __tablename__ = 'databases'
 
-    id = Column(Integer, primary_key=True, index=True)
-    nome = Column(String(255), nullable=False)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    nome = Column(String(255), nullable=False, unique=True)
     tecnologia = Column(String(50), nullable=False)
     descricao = Column(Text, nullable=True)
     estado_atual = Column(String(50), nullable=True)
@@ -56,11 +73,12 @@ class Database(Base):
         'Responsavel', secondary=responsaveis_databases, back_populates="databases"
     )
 
+
 # Model Tabela
 class Tabela(Base):
     __tablename__ = 'tabelas'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nome = Column(String(255), nullable=False)
     descricao = Column(Text, nullable=True)
     database_id = Column(Integer, ForeignKey('databases.id'))
@@ -72,21 +90,23 @@ class Tabela(Base):
         'Responsavel', secondary=responsaveis_tabelas, back_populates="tabelas"
     )
 
+
 # Model Coluna
 class Coluna(Base):
     __tablename__ = 'colunas'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nome = Column(String(255), nullable=False)
     tipo_dado = Column(String(50), nullable=False)
     descricao = Column(Text, nullable=True)
     tabela_id = Column(Integer, ForeignKey('tabelas.id'))
 
+
 # Model TopicoKafka
 class TopicoKafka(Base):
     __tablename__ = 'topicos_kafka'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nome = Column(String(255), nullable=False)
     descricao = Column(Text, nullable=True)
     estado_atual = Column(String(50), nullable=True)
@@ -96,34 +116,37 @@ class TopicoKafka(Base):
         'Responsavel', secondary=responsaveis_topicos_kafka, back_populates="topicos_kafka"
     )
 
+
 # Model ColunaTopicoKafka
 class ColunaTopicoKafka(Base):
     __tablename__ = 'colunas_topicos_kafka'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nome = Column(String(255), nullable=False)
     tipo_dado = Column(String(50), nullable=False)
     descricao = Column(Text, nullable=True)
     topico_kafka_id = Column(Integer, ForeignKey('topicos_kafka.id'))
 
+
 # Model Usuario
 class Usuario(Base):
     __tablename__ = 'usuarios'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nome = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     cargo = Column(String(100), nullable=True)
     telefone = Column(String(15), nullable=True)
 
+
 # Model RegistroAcesso
 class RegistroAcesso(Base):
     __tablename__ = 'registros_acesso'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     usuario_id = Column(Integer, ForeignKey('usuarios.id'))
     conjunto_dados = Column(String(255), nullable=False)
     data_solicitacao = Column(DateTime, nullable=False)
     finalidade_uso = Column(Text, nullable=False)
-    permissoes_concedidas = Column(Text, nullable=True)
+    permissoes_concedidas = Column(JSON, nullable=True)  # Change to JSON
     status = Column(String(50), nullable=True)
