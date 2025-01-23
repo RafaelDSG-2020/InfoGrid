@@ -12,7 +12,8 @@ from infogrid.routers import (
     colunatopicoKafka,
     registroacesso,
     usuario,
-    relacionamentos
+    relacionamentos,
+    entidades
 )
 from infogrid.schemas import Message
 
@@ -45,6 +46,7 @@ app.include_router(colunatopicoKafka.router)
 app.include_router(registroacesso.router)
 app.include_router(usuario.router)
 app.include_router(relacionamentos.router)
+app.include_router(entidades.router)
 
 # app.include_router(routerdatabase.router, prefix="/routerdatabase", tags=["RouterDatabase"])
 # app.include_router(responsavel.router, prefix="/responsavel", tags=["Responsável"])
