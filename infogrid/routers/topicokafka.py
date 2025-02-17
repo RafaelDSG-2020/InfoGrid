@@ -1,130 +1,174 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
 from http import HTTPStatus
 from typing import List
-from infogrid.database import get_session
-from infogrid.models import TopicoKafka as TopicoKafkaModel
-from infogrid.schemas import TopicoKafka, TopicoKafkaPublic
 import logging
+from beanie import PydanticObjectId
+from infogrid.models import TopicoKafka as TopicoKafkaModel, Usuario
+from infogrid.database import get_db
+from infogrid.schemas import TopicoKafka as TopicoKafkaSchema, TopicoKafkaPublic
 
 logger = logging.getLogger("app_logger")
 
-router = APIRouter(prefix='/api/v1/topicokafka', tags=['topicokafka'])
+router = APIRouter(prefix="/api/v1/topicokafka", tags=["topicokafka"])
 
+
+# ==========================
+# LISTAR TODOS OS TÓPICOS KAFKA
+# ==========================
 
 @router.get("/", status_code=HTTPStatus.OK, response_model=List[TopicoKafkaPublic])
-def list_topicos_kafka(session: Session = Depends(get_session)):
+async def list_topicos_kafka():
+    """Lista todos os tópicos Kafka"""
     logger.info("Endpoint /topicokafka acessado")
-    topicos = session.scalars(select(TopicoKafkaModel)).all()
-    logger.info(f"{len(topicos)} tópicos Kafka encontrados")
-    return topicos
+    
+    # Buscar os tópicos e carregar os links corretamente
+    topicos = await TopicoKafkaModel.find(fetch_links=True).to_list(100)
+    
+    return [
+        TopicoKafkaPublic(
+            id=str(topico.id),
+            nome=topico.nome,
+            descricao=topico.descricao,
+            responsaveis=[
+                str(res.id) if hasattr(res, "id") else str(res) for res in topico.responsaveis
+            ] if topico.responsaveis else [],
+            estado_atual=topico.estado_atual,
+            conformidade=topico.conformidade,
+        )
+        for topico in topicos
+    ]
 
 
 @router.get("/pagined/", status_code=HTTPStatus.OK, response_model=List[TopicoKafkaPublic])
-def list_topicos_kafka_paged(limit: int = 5, skip: int = 0, session: Session = Depends(get_session)):
+async def list_topicos_kafka_paged(limit: int = 5, skip: int = 0):
+    """Lista tópicos Kafka com paginação"""
     logger.info(f"Endpoint /topicokafka/pagined acessado com limite {limit} e offset {skip}")
-    topicos = session.scalars(select(TopicoKafkaModel).limit(limit).offset(skip)).all()
-    logger.info(f"{len(topicos)} tópicos Kafka encontrados")
-    return topicos
+    
+    # Buscar os tópicos e carregar os links corretamente
+    topicos = await TopicoKafkaModel.find(fetch_links=True).skip(skip).limit(limit).to_list()
+    
+    return [
+        TopicoKafkaPublic(
+            id=str(topico.id),
+            nome=topico.nome,
+            descricao=topico.descricao,
+            responsaveis=[
+                str(res.id) if hasattr(res, "id") else str(res) for res in topico.responsaveis
+            ] if topico.responsaveis else [],
+            estado_atual=topico.estado_atual,
+            conformidade=topico.conformidade,
+        )
+        for topico in topicos
+    ]
 
+
+# ==========================
+# CRIAR UM NOVO TÓPICO KAFKA
+# ==========================
 
 @router.post("/", status_code=HTTPStatus.CREATED, response_model=TopicoKafkaPublic)
-def create_topico_kafka(topico: TopicoKafka, session: Session = Depends(get_session)):
-    """
-    Cria um novo tópico Kafka ignorando os responsáveis associados
-    """
-    with session as session:
-        db_topico = session.scalar(select(TopicoKafkaModel).where(TopicoKafkaModel.nome == topico.nome))
-        if db_topico:
-            logger.warning("Tentativa de criação de tópico Kafka falhou: tópico já existe")
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Tópico Kafka already exists")
+async def create_topico_kafka(topico: TopicoKafkaSchema, db=Depends(get_db)):
+    """Cria um novo tópico Kafka"""
+    logger.info("Endpoint /topicokafka acessado para criação")
 
-        data = topico.dict(exclude={"responsaveis"})
-        db_instance = TopicoKafkaModel(**data)
-        session.add(db_instance)
+    # Converter IDs dos responsáveis para PydanticObjectId
+    responsaveis_ids = [PydanticObjectId(res_id) for res_id in topico.responsaveis]
 
-        try:
-            session.commit()
-            logger.info(f"Tópico Kafka '{db_instance.nome}' criado com sucesso")
-        except IntegrityError:
-            session.rollback()
-            logger.error("Erro ao inserir tópico Kafka", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Tópico Kafka insertion failed")
+    novo_topico = TopicoKafkaModel(
+        nome=topico.nome,
+        descricao=topico.descricao,
+        responsaveis=responsaveis_ids,  # Armazena apenas os IDs
+        estado_atual=topico.estado_atual,
+        conformidade=topico.conformidade,
+    )
+    await novo_topico.insert()
 
-        session.refresh(db_instance)
+    return TopicoKafkaPublic(
+        id=str(novo_topico.id),
+        nome=novo_topico.nome,
+        descricao=novo_topico.descricao,
+        responsaveis=[str(res) for res in novo_topico.responsaveis],  # Retorna os IDs como strings
+        estado_atual=novo_topico.estado_atual,
+        conformidade=novo_topico.conformidade,
+    )
 
-    return {
-        "id": db_instance.id,
-        "nome": db_instance.nome,
-        "descricao": db_instance.descricao,
-        "responsaveis": [],
-        "estado_atual": db_instance.estado_atual,
-        "conformidade": db_instance.conformidade,
-    }
 
+
+# ==========================
+# DELETAR UM TÓPICO KAFKA
+# ==========================
 
 @router.delete("/{topico_id}", status_code=HTTPStatus.NO_CONTENT)
-def delete_topico_kafka(topico_id: int, session: Session = Depends(get_session)):
+async def delete_topico_kafka(topico_id: str):
+    """Exclui um tópico Kafka pelo ID"""
     logger.info(f"Tentativa de exclusão do tópico Kafka com ID {topico_id}")
-    with session as session:
-        db_topico = session.scalar(select(TopicoKafkaModel).where(TopicoKafkaModel.id == topico_id))
-        if not db_topico:
-            logger.warning(f"Tentativa de exclusão falhou: tópico Kafka com ID {topico_id} não encontrado")
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Tópico Kafka not found")
-        session.delete(db_topico)
-        try:
-            session.commit()
-            logger.info(f"Tópico Kafka com ID {topico_id} excluído com sucesso")
-        except IntegrityError as e:
-            session.rollback()
-            logger.error(f"Erro ao excluir tópico Kafka com ID {topico_id}: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=f"Tópico Kafka deletion failed: {str(e)}")
+
+    db_topico = await TopicoKafkaModel.get(PydanticObjectId(topico_id))
+    if not db_topico:
+        logger.warning(f"Tópico Kafka com ID {topico_id} não encontrado")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Tópico Kafka not found")
+
+    await db_topico.delete()
+
+    logger.info(f"Tópico Kafka com ID {topico_id} excluído com sucesso")
     return {"message": "Tópico Kafka deleted successfully"}
 
-    #     session.commit()
-    # return {"message": "Tópico Kafka deleted successfully"}
 
+# ==========================
+# ATUALIZAR UM TÓPICO KAFKA
+# ==========================
 
 @router.put("/{topico_id}", status_code=HTTPStatus.OK, response_model=TopicoKafkaPublic)
-def update_topico_kafka(topico_id: int, topico: TopicoKafka, session: Session = Depends(get_session)):
+async def update_topico_kafka(topico_id: str, topico: TopicoKafkaSchema):
+    """Atualiza um tópico Kafka pelo ID"""
     logger.info(f"Tentativa de atualização do tópico Kafka com ID {topico_id}")
-    with session as session:
-        db_topico = session.scalar(
-            select(TopicoKafkaModel)
-            .where(TopicoKafkaModel.id == topico_id)
-            .options(joinedload(TopicoKafkaModel.responsaveis))  # Carrega responsaveis
-        )
-        if not db_topico:
-            logger.warning(f"Tentativa de atualização falhou: tópico Kafka com ID {topico_id} não encontrado")
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Tópico Kafka not found")
 
-        # Atualiza os dados do tópico Kafka
-        update_data = topico.dict(exclude={"responsaveis"})
-        for key, value in update_data.items():
-            setattr(db_topico, key, value)
+    # Buscar o tópico no banco de dados
+    db_topico = await TopicoKafkaModel.get(PydanticObjectId(topico_id), fetch_links=True)
+    if not db_topico:
+        logger.warning(f"Tópico Kafka com ID {topico_id} não encontrado")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Tópico Kafka not found")
 
-        try:
-            session.commit()
-            logger.info(f"Tópico Kafka com ID {topico_id} atualizado com sucesso")
-        except IntegrityError:
-            session.rollback()
-            logger.error(f"Erro ao atualizar tópico Kafka com ID {topico_id}", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Tópico Kafka update failed")
+    # Atualizar responsáveis corretamente
+    if topico.responsaveis:
+        responsaveis_links = [PydanticObjectId(res_id) for res_id in topico.responsaveis]
+    else:
+        responsaveis_links = db_topico.responsaveis  # Mantém os responsáveis existentes
 
-        session.refresh(db_topico)
+    # Criar dicionário de atualização apenas com os campos preenchidos
+    update_data = {
+        "nome": topico.nome if topico.nome else db_topico.nome,
+        "descricao": topico.descricao if topico.descricao else db_topico.descricao,
+        "responsaveis": responsaveis_links,
+        "estado_atual": topico.estado_atual if topico.estado_atual else db_topico.estado_atual,
+        "conformidade": topico.conformidade if topico.conformidade is not None else db_topico.conformidade,
+    }
 
-    return db_topico
+    # Aplicar a atualização no banco
+    await db_topico.set(update_data)
+
+    logger.info(f"Tópico Kafka com ID {topico_id} atualizado com sucesso")
+
+    # Retornar o objeto atualizado corretamente formatado
+    return TopicoKafkaPublic(
+        id=str(db_topico.id),
+        nome=db_topico.nome,
+        descricao=db_topico.descricao,
+        responsaveis=[str(res.id) if hasattr(res, "id") else str(res) for res in db_topico.responsaveis] if db_topico.responsaveis else [],
+        estado_atual=db_topico.estado_atual,
+        conformidade=db_topico.conformidade,
+    )
 
 
 
-@router.get("/topicoskafka", status_code=HTTPStatus.OK)
-def count_databases(session: Session = Depends(get_session)):
-    """
-    Endpoint para contar o número de registros na tabela 'topicoskafka'.
-    """
-    logger.info("Endpoint /topicokafka/topicoskafka acessado para contar registros")
-    quantidade = session.scalar(select(func.count()).select_from(TopicoKafkaModel))
+# ==========================
+# CONTAR TÓPICOS KAFKA
+# ==========================
+
+@router.get("/count", status_code=HTTPStatus.OK)
+async def count_topicos_kafka():
+    """Conta o número total de tópicos Kafka"""
+    logger.info("Endpoint /topicokafka/count acessado")
+    quantidade = await TopicoKafkaModel.find().count()
     logger.info(f"Quantidade de tópicos Kafka: {quantidade}")
     return {"quantidade": quantidade}

@@ -1,148 +1,177 @@
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select, insert, delete, join
-from infogrid.database import get_session
-# from infogrid.models import responsaveis_databases, responsaveis_tabelas, responsaveis_topicos_kafka
-from infogrid.models import responsaveis_databases, responsaveis_tabelas, responsaveis_topicos_kafka, Responsavel, Database, TopicoKafka, Tabela
-
+from fastapi import APIRouter, HTTPException
 from http import HTTPStatus
+import logging
+from beanie import PydanticObjectId
+from infogrid.models import Responsavel, Database, Tabela, TopicoKafka
 
-router = APIRouter(prefix='/api/v1/relacionamentos', tags=['relacionamentos'])
+logger = logging.getLogger("app_logger")
 
-# Endpoints para responsaveis_databases
+router = APIRouter(prefix="/api/v1/relacionamentos", tags=["relacionamentos"])
+
+
+# ==========================
+# RELACIONAMENTOS RESPONSÁVEIS X DATABASES
+# ==========================
+
 @router.post("/responsaveis_databases/", status_code=HTTPStatus.CREATED)
-def create_responsavel_database(responsavel_id: int, database_id: int, session: Session = Depends(get_session)):
-    stmt = insert(responsaveis_databases).values(responsavel_id=responsavel_id, database_id=database_id)
-    try:
-        session.execute(stmt)
-        session.commit()
-    except IntegrityError as e:
-        session.rollback()
+async def create_responsavel_database(responsavel_id: str, database_id: str):
+    """Cria um relacionamento entre Responsável e Database"""
+    responsavel = await Responsavel.get(PydanticObjectId(responsavel_id))
+    database = await Database.get(PydanticObjectId(database_id))
+
+    if not responsavel or not database:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Responsável ou Database não encontrado")
+
+    if database.id in responsavel.databases:
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Relacionamento já existe")
+
+    responsavel.databases.append(database.id)
+    await responsavel.save()
+
     return {"message": "Relacionamento criado com sucesso"}
+
 
 @router.delete("/responsaveis_databases/", status_code=HTTPStatus.NO_CONTENT)
-def delete_responsavel_database(responsavel_id: int, database_id: int, session: Session = Depends(get_session)):
-    stmt = delete(responsaveis_databases).where(
-        responsaveis_databases.c.responsavel_id == responsavel_id,
-        responsaveis_databases.c.database_id == database_id
-    )
-    result = session.execute(stmt)
-    if result.rowcount == 0:
+async def delete_responsavel_database(responsavel_id: str, database_id: str):
+    """Remove um relacionamento entre Responsável e Database"""
+    responsavel = await Responsavel.get(PydanticObjectId(responsavel_id))
+
+    if not responsavel or database_id not in responsavel.databases:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamento não encontrado")
-    session.commit()
+
+    responsavel.databases.remove(database_id)
+    await responsavel.save()
+
     return {"message": "Relacionamento excluído com sucesso"}
+
 
 @router.get("/responsaveis_databases/", status_code=HTTPStatus.OK)
-def get_responsavel_databases(session: Session = Depends(get_session)):
-    stmt = select(
-        Responsavel.id, Responsavel.nome, Database.id, Database.nome
-    ).select_from(
-        join(responsaveis_databases, Responsavel, responsaveis_databases.c.responsavel_id == Responsavel.id)
-    ).join(
-        Database, responsaveis_databases.c.database_id == Database.id
-    )
-    result = session.execute(stmt).fetchall()
-    if not result:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-    return [{"responsavel_id": row[0], "responsavel_nome": row[1], "database_id": row[2], "database_nome": row[3]} for row in result]
+async def get_responsavel_databases():
+    """Lista todos os relacionamentos de Responsáveis com Databases"""
+    responsaveis = await Responsavel.find().to_list()
+    relacionamentos = []
+    
+    for r in responsaveis:
+        for db_id in r.databases:
+            database = await Database.get(db_id)
+            if database:
+                relacionamentos.append({
+                    "responsavel_id": str(r.id),
+                    "responsavel_nome": r.nome,
+                    "database_id": str(database.id),
+                    "database_nome": database.nome
+                })
 
-# Endpoints par
-
-# @router.get("/responsaveis_databases/", status_code=HTTPStatus.OK)
-# def get_responsavel_databases(session: Session = Depends(get_session)):
-#     stmt = select(responsaveis_databases)
-#     result = session.execute(stmt).fetchall()
-#     if not result:
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-#     return [{"responsavel_id": row.responsavel_id, "database_id": row.database_id} for row in result]
+    return relacionamentos
 
 
-# @router.get("/responsaveis_tabelas/", status_code=HTTPStatus.OK)
-# def get_responsavel_tabelas(session: Session = Depends(get_session)):
-#     stmt = select(responsaveis_tabelas)
-#     result = session.execute(stmt).fetchall()
-#     if not result:
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-#     return [dict(row) for row in result]
+# ==========================
+# RELACIONAMENTOS RESPONSÁVEIS X TABELAS
+# ==========================
 
-
-
-# Endpoints para responsaveis_tabelas
 @router.post("/responsaveis_tabelas/", status_code=HTTPStatus.CREATED)
-def create_responsavel_tabela(responsavel_id: int, tabela_id: int, session: Session = Depends(get_session)):
-    stmt = insert(responsaveis_tabelas).values(responsavel_id=responsavel_id, tabela_id=tabela_id)
-    try:
-        session.execute(stmt)
-        session.commit()
-    except IntegrityError as e:
-        session.rollback()
+async def create_responsavel_tabela(responsavel_id: str, tabela_id: str):
+    """Cria um relacionamento entre Responsável e Tabela"""
+    responsavel = await Responsavel.get(PydanticObjectId(responsavel_id))
+    tabela = await Tabela.get(PydanticObjectId(tabela_id))
+
+    if not responsavel or not tabela:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Responsável ou Tabela não encontrado")
+
+    if tabela.id in responsavel.tabelas:
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Relacionamento já existe")
+
+    responsavel.tabelas.append(tabela.id)
+    await responsavel.save()
+
     return {"message": "Relacionamento criado com sucesso"}
+
 
 @router.delete("/responsaveis_tabelas/", status_code=HTTPStatus.NO_CONTENT)
-def delete_responsavel_tabela(responsavel_id: int, tabela_id: int, session: Session = Depends(get_session)):
-    stmt = delete(responsaveis_tabelas).where(
-        responsaveis_tabelas.c.responsavel_id == responsavel_id,
-        responsaveis_tabelas.c.tabela_id == tabela_id
-    )
-    result = session.execute(stmt)
-    if result.rowcount == 0:
+async def delete_responsavel_tabela(responsavel_id: str, tabela_id: str):
+    """Remove um relacionamento entre Responsável e Tabela"""
+    responsavel = await Responsavel.get(PydanticObjectId(responsavel_id))
+
+    if not responsavel or tabela_id not in responsavel.tabelas:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamento não encontrado")
-    session.commit()
+
+    responsavel.tabelas.remove(tabela_id)
+    await responsavel.save()
+
     return {"message": "Relacionamento excluído com sucesso"}
+
 
 @router.get("/responsaveis_tabelas/", status_code=HTTPStatus.OK)
-def get_responsavel_tabelas(session: Session = Depends(get_session)):
-    stmt = select(
-        Responsavel.id, Responsavel.nome, Tabela.id, Tabela.nome
-    ).select_from(
-        join(responsaveis_tabelas, Responsavel, responsaveis_tabelas.c.responsavel_id == Responsavel.id)
-    ).join(
-        Tabela, responsaveis_tabelas.c.tabela_id == Tabela.id
-    )
-    result = session.execute(stmt).fetchall()
-    if not result:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-    return [{"responsavel_id": row[0], "responsavel_nome": row[1], "tabela_id": row[2], "tabela_nome": row[3]} for row in result]
+async def get_responsavel_tabelas():
+    """Lista todos os relacionamentos de Responsáveis com Tabelas"""
+    responsaveis = await Responsavel.find().to_list()
+    relacionamentos = []
+    
+    for r in responsaveis:
+        for tb_id in r.tabelas:
+            tabela = await Tabela.get(tb_id)
+            if tabela:
+                relacionamentos.append({
+                    "responsavel_id": str(r.id),
+                    "responsavel_nome": r.nome,
+                    "tabela_id": str(tabela.id),
+                    "tabela_nome": tabela.nome
+                })
+
+    return relacionamentos
 
 
+# ==========================
+# RELACIONAMENTOS RESPONSÁVEIS X TÓPICOS KAFKA
+# ==========================
 
-# Endpoints para responsaveis_topicos_kafka
 @router.post("/responsaveis_topicos_kafka/", status_code=HTTPStatus.CREATED)
-def create_responsavel_topico_kafka(responsavel_id: int, topico_kafka_id: int, session: Session = Depends(get_session)):
-    stmt = insert(responsaveis_topicos_kafka).values(responsavel_id=responsavel_id, topico_kafka_id=topico_kafka_id)
-    try:
-        session.execute(stmt)
-        session.commit()
-    except IntegrityError as e:
-        session.rollback()
+async def create_responsavel_topico_kafka(responsavel_id: str, topico_kafka_id: str):
+    """Cria um relacionamento entre Responsável e Tópico Kafka"""
+    responsavel = await Responsavel.get(PydanticObjectId(responsavel_id))
+    topico = await TopicoKafka.get(PydanticObjectId(topico_kafka_id))
+
+    if not responsavel or not topico:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Responsável ou Tópico Kafka não encontrado")
+
+    if topico.id in responsavel.topicos_kafka:
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Relacionamento já existe")
+
+    responsavel.topicos_kafka.append(topico.id)
+    await responsavel.save()
+
     return {"message": "Relacionamento criado com sucesso"}
 
+
 @router.delete("/responsaveis_topicos_kafka/", status_code=HTTPStatus.NO_CONTENT)
-def delete_responsavel_topico_kafka(responsavel_id: int, topico_kafka_id: int, session: Session = Depends(get_session)):
-    stmt = delete(responsaveis_topicos_kafka).where(
-        responsaveis_topicos_kafka.c.responsavel_id == responsavel_id,
-        responsaveis_topicos_kafka.c.topico_kafka_id == topico_kafka_id
-    )
-    result = session.execute(stmt)
-    if result.rowcount == 0:
+async def delete_responsavel_topico_kafka(responsavel_id: str, topico_kafka_id: str):
+    """Remove um relacionamento entre Responsável e Tópico Kafka"""
+    responsavel = await Responsavel.get(PydanticObjectId(responsavel_id))
+
+    if not responsavel or topico_kafka_id not in responsavel.topicos_kafka:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamento não encontrado")
-    session.commit()
+
+    responsavel.topicos_kafka.remove(topico_kafka_id)
+    await responsavel.save()
+
     return {"message": "Relacionamento excluído com sucesso"}
 
+
 @router.get("/responsaveis_topicos_kafka/", status_code=HTTPStatus.OK)
-def get_responsavel_topicos_kafka(session: Session = Depends(get_session)):
-    stmt = select(
-        Responsavel.id, Responsavel.nome, TopicoKafka.id, TopicoKafka.nome
-    ).select_from(
-        join(responsaveis_topicos_kafka, Responsavel, responsaveis_topicos_kafka.c.responsavel_id == Responsavel.id)
-    ).join(
-        TopicoKafka, responsaveis_topicos_kafka.c.topico_kafka_id == TopicoKafka.id
-    )
-    result = session.execute(stmt).fetchall()
-    if not result:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-    return [{"responsavel_id": row[0], "responsavel_nome": row[1], "topico_kafka_id": row[2], "topico_kafka_nome": row[3]} for row in result]
+async def get_responsavel_topicos_kafka():
+    """Lista todos os relacionamentos de Responsáveis com Tópicos Kafka"""
+    responsaveis = await Responsavel.find().to_list()
+    relacionamentos = []
+    
+    for r in responsaveis:
+        for tk_id in r.topicos_kafka:
+            topico = await TopicoKafka.get(tk_id)
+            if topico:
+                relacionamentos.append({
+                    "responsavel_id": str(r.id),
+                    "responsavel_nome": r.nome,
+                    "topico_kafka_id": str(topico.id),
+                    "topico_kafka_nome": topico.nome
+                })
+
+    return relacionamentos

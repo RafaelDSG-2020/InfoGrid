@@ -1,143 +1,134 @@
+from fastapi import APIRouter, HTTPException, Depends
 from http import HTTPStatus
 from typing import List
-from fastapi import APIRouter, HTTPException , Depends
-from sqlalchemy import create_engine, insert, select, func
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy.exc import IntegrityError
-from infogrid.database import get_session
-from infogrid.models import Responsavel as ResponsavelModel
-from infogrid.schemas import Responsavel, ResponsavelPublic
-from infogrid.settings import Settings
 import logging
+from beanie import PydanticObjectId
+from infogrid.models import Responsavel
+from infogrid.schemas import Responsavel as ResponsavelSchema, ResponsavelPublic
 
 logger = logging.getLogger("app_logger")
 
-
-
-router = APIRouter(prefix='/api/v1/responsavel', tags=['responsavel'])
-
+router = APIRouter(prefix="/api/v1/responsavel", tags=["responsavel"])
 
 
 @router.get("/", status_code=HTTPStatus.OK, response_model=List[ResponsavelPublic])
-def list_responsavel(session: Session = Depends(get_session)):
+async def list_responsavel():
+    """Lista todos os responsáveis"""
     logger.info("Endpoint /responsavel acessado")
-    responsavel = session.scalars(select(ResponsavelModel)).all()
-    logger.info(f"{len(responsavel)} responsáveis encontrados")
-    return responsavel
+    responsaveis = await Responsavel.find().to_list(100)
+    return [
+        ResponsavelPublic(
+            id=str(resp.id),
+            nome=resp.nome,
+            email=resp.email,
+            cargo=resp.cargo,
+            telefone=resp.telefone
+        )
+        for resp in responsaveis
+    ]
 
 
-@router.get("/pagined/", status_code=HTTPStatus.OK, response_model=List[ResponsavelPublic]) 
-def list_responsavel_paged(limit: int = 5, skip: int = 0, session: Session = Depends(get_session)):
+@router.get("/pagined/", status_code=HTTPStatus.OK, response_model=List[ResponsavelPublic])
+async def list_responsavel_paged(limit: int = 5, skip: int = 0):
+    """Lista responsáveis com paginação"""
     logger.info(f"Endpoint /responsavel/pagined acessado com limite {limit} e offset {skip}")
-    responsavel = session.scalars(select(ResponsavelModel).limit(limit).offset(skip)).all()
-    logger.info(f"{len(responsavel)} responsáveis encontrados")
-    return responsavel
-
-
+    responsaveis = await Responsavel.find().skip(skip).limit(limit).to_list()
+    return [
+        ResponsavelPublic(
+            id=str(resp.id),
+            nome=resp.nome,
+            email=resp.email,
+            cargo=resp.cargo,
+            telefone=resp.telefone
+        )
+        for resp in responsaveis
+    ]
 
 
 @router.post("/", status_code=HTTPStatus.CREATED, response_model=ResponsavelPublic)
-def create_responsavel(responsavel: Responsavel):
+async def create_responsavel(responsavel: ResponsavelSchema):
+    """Cria um novo responsável"""
     logger.info("Tentativa de criação de um novo responsável")
-    engine = create_engine(Settings().DATABASE_URL)
-    with Session(engine) as session:
-        db_responsavel = session.scalar(select(ResponsavelModel).where(ResponsavelModel.email == responsavel.email))
-        if db_responsavel:
-            logger.warning("Tentativa de criação de responsável falhou: responsável já existe")
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Responsavel already exists")
-        data = responsavel.dict(exclude={"responsaveis"})
-        db_instance = ResponsavelModel(**data)
-        session.add(db_instance)
-        try:
-            session.commit()
-            logger.info(f"Responsável '{db_instance.nome}' criado com sucesso")
-        except IntegrityError:
-            session.rollback()
-            logger.error("Erro ao inserir responsável", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Responsavel insertion failed")
-        session.refresh(db_instance)
 
-    # Ensure all required fields are included
-    return {
-        "id": db_instance.id,
-        "nome": db_instance.nome,
-        "email": db_instance.email,
-        "responsaveis": [],
-        "cargo": db_instance.cargo,  
-        "telefone": db_instance.telefone,  
-    }
+    # Verifica se já existe um responsável com o mesmo email
+    try:
+        db_responsavel = await Responsavel.find_one(Responsavel.email == responsavel.email)
+    except Exception as e:
+        logger.error(f"Erro ao buscar responsável por email: {str(e)}")
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Database query failed")
+
+    if db_responsavel:
+        logger.warning("Responsável já existe")
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Responsavel already exists")
+
+    # Criando o novo responsável
+    novo_responsavel = Responsavel(**responsavel.dict())
+    await novo_responsavel.insert()
+
+    logger.info(f"Responsável '{novo_responsavel.nome}' criado com sucesso")
+    return ResponsavelPublic(
+        id=str(novo_responsavel.id),
+        nome=novo_responsavel.nome,
+        email=novo_responsavel.email,
+        cargo=novo_responsavel.cargo,
+        telefone=novo_responsavel.telefone
+    )
+
 
 @router.delete("/{responsavel_id}", status_code=HTTPStatus.NO_CONTENT)
-def delete_responsavel(responsavel_id: int, session: Session = Depends(get_session)):
+async def delete_responsavel(responsavel_id: str):
+    """Exclui um responsável pelo ID"""
     logger.info(f"Tentativa de exclusão do responsável com ID {responsavel_id}")
-    with session as session:
-        db_database = session.scalar(select(ResponsavelModel).where(ResponsavelModel.id == responsavel_id))
-        if not db_database:
-            logger.warning(f"Tentativa de exclusão falhou: responsável com ID {responsavel_id} não encontrado")
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Responsavel not found")
-        session.delete(db_database)
-        try:
-            session.commit()
-            logger.info(f"Responsável com ID {responsavel_id} excluído com sucesso")
-        except IntegrityError as e:
-            session.rollback()
-            logger.error(f"Erro ao excluir responsável com ID {responsavel_id}: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=f"Responsavel deletion failed: {str(e)}")
+
+    db_responsavel = await Responsavel.get(PydanticObjectId(responsavel_id))
+    if not db_responsavel:
+        logger.warning(f"Responsável com ID {responsavel_id} não encontrado")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Responsavel not found")
+
+    await db_responsavel.delete()
+
+    logger.info(f"Responsável com ID {responsavel_id} excluído com sucesso")
     return {"message": "Responsavel deleted successfully"}
-
-    #     session.commit()
-    # return {"message": "Responsavel deleted successfully"}
-
-
 
 
 @router.put("/{responsavel_id}", status_code=HTTPStatus.OK, response_model=ResponsavelPublic)
-def update_responsavel(responsavel_id: int, responsavel: Responsavel, session: Session = Depends(get_session)):
+async def update_responsavel(responsavel_id: str, responsavel: ResponsavelSchema):
+    """Atualiza um responsável pelo ID"""
     logger.info(f"Tentativa de atualização do responsável com ID {responsavel_id}")
-    with session as session:
-        # Carrega o responsável com os relacionamentos necessários
-        db_responsavel = session.scalar(
-            select(ResponsavelModel)
-            .where(ResponsavelModel.id == responsavel_id)
-            .options(
-                joinedload(ResponsavelModel.databases),  # Carrega relacionamentos com databases
-                joinedload(ResponsavelModel.tabelas),  # Carrega relacionamentos com tabelas
-                joinedload(ResponsavelModel.topicos_kafka)  # Carrega relacionamentos com tópicos Kafka
-            )
-        )
-        if not db_responsavel:
-            logger.warning(f"Tentativa de atualização falhou: responsável com ID {responsavel_id} não encontrado")
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Responsável not found")
 
-        # Atualiza os dados do responsável
-        update_data = responsavel.dict(exclude={"databases", "tabelas", "topicos_kafka"})
-        for key, value in update_data.items():
-            setattr(db_responsavel, key, value)
+    db_responsavel = await Responsavel.get(PydanticObjectId(responsavel_id))
+    if not db_responsavel:
+        logger.warning(f"Responsável com ID {responsavel_id} não encontrado")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Responsável not found")
 
-        try:
-            session.commit()
-            logger.info(f"Responsável com ID {responsavel_id} atualizado com sucesso")
-        except IntegrityError:
-            session.rollback()
-            logger.error(f"Erro ao atualizar responsável com ID {responsavel_id}", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Responsável update failed")
+    update_data = {k: v for k, v in responsavel.dict().items() if v is not None}
+    await db_responsavel.set(update_data)
 
-        # Atualiza o objeto para refletir as mudanças
-        session.refresh(db_responsavel)
-
-    return db_responsavel
+    logger.info(f"Responsável com ID {responsavel_id} atualizado com sucesso")
+    return ResponsavelPublic(
+        id=str(db_responsavel.id),
+        nome=db_responsavel.nome,
+        email=db_responsavel.email,
+        cargo=db_responsavel.cargo,
+        telefone=db_responsavel.telefone
+    )
 
 
-
-@router.get("/responsaveis", status_code=HTTPStatus.OK)
-def count_responsaveis(session: Session = Depends(get_session)):
-    """
-    Endpoint para contar o número de registros na tabela 'responsaveis'.
-    """
-    logger.info("Endpoint /responsavel/responsaveis acessado para contar registros")
-    quantidade = session.scalar(select(func.count()).select_from(ResponsavelModel))
+@router.get("/count", status_code=HTTPStatus.OK)
+async def count_responsaveis():
+    """Conta o número total de responsáveis"""
+    logger.info("Endpoint /responsavel/count acessado")
+    quantidade = await Responsavel.find().count()
     logger.info(f"Quantidade de responsáveis: {quantidade}")
     return {"quantidade": quantidade}
 
 
+@router.get("/debug", status_code=HTTPStatus.OK)
+async def debug_mongo():
+    """Verifica a conexão com o banco e lista IDs disponíveis"""
+    responsaveis = await Responsavel.find().to_list()
     
+    return {
+        "total_responsaveis": len(responsaveis),
+        "ids": [str(r.id) for r in responsaveis]
+    }

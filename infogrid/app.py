@@ -2,7 +2,7 @@ from http import HTTPStatus
 from fastapi import FastAPI, Request
 import logging
 from logging.handlers import RotatingFileHandler
-from infogrid.database import get_session
+from infogrid.database import init_db
 from infogrid.routers import (
     responsavel,
     routerdatabase, 
@@ -35,6 +35,10 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     logger.info(f"Resposta gerada com status: {response.status_code}")
     return response
+
+@app.on_event("startup")
+async def startup():
+    await init_db() 
 
 # Inclusão de routers
 app.include_router(routerdatabase.router)

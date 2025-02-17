@@ -1,151 +1,160 @@
-import json
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 from http import HTTPStatus
 from typing import List
-from infogrid.database import get_session
-from infogrid.models import RegistroAcesso as RegistroAcessoModel
-from infogrid.schemas import RegistroAcesso, RegistroAcessoPublic
 import logging
+from beanie import PydanticObjectId
+from infogrid.models import RegistroAcesso
+from infogrid.schemas import RegistroAcesso as RegistroAcessoSchema, RegistroAcessoPublic
 
 logger = logging.getLogger("app_logger")
 
-router = APIRouter(prefix='/api/v1/registroacesso', tags=['registroacesso'])
+router = APIRouter(prefix="/api/v1/registroacesso", tags=["registroacesso"])
 
+
+# ==========================
+# LISTAR TODOS OS REGISTROS DE ACESSO
+# ==========================
 
 @router.get("/", status_code=HTTPStatus.OK, response_model=List[RegistroAcessoPublic])
-def list_registros_acesso(session: Session = Depends(get_session)):
+async def list_registros_acesso():
+    """Lista todos os registros de acesso"""
     logger.info("Endpoint /registroacesso acessado")
-    registros = session.scalars(select(RegistroAcessoModel)).all()
-    logger.info(f"{len(registros)} registros de acesso encontrados")
+    
+    registros = await RegistroAcesso.find(fetch_links=True).to_list()
+    
+    return [
+        RegistroAcessoPublic(
+            id=str(reg.id),
+            usuario_id=str(reg.usuario_id.id) if hasattr(reg.usuario_id, "id") else str(reg.usuario_id),
+            conjunto_dados=reg.conjunto_dados,
+            data_solicitacao=reg.data_solicitacao,
+            finalidade_uso=reg.finalidade_uso,
+            permissoes_concedidas=reg.permissoes_concedidas or [],
+            status=reg.status
+        )
+        for reg in registros
+    ]
 
-    return registros
 
+# ==========================
+# LISTAR REGISTROS COM PAGINAÇÃO
+# ==========================
 
 @router.get("/pagined/", status_code=HTTPStatus.OK, response_model=List[RegistroAcessoPublic])
-def list_registros_acesso_paged(limit: int = 5, skip: int = 0, session: Session = Depends(get_session)):
+async def list_registros_acesso_paged(limit: int = 5, skip: int = 0):
+    """Lista registros de acesso com paginação"""
     logger.info(f"Endpoint /registroacesso/pagined acessado com limite {limit} e offset {skip}")
-    registros = session.scalars(select(RegistroAcessoModel).limit(limit).offset(skip)).all()
-    logger.info(f"{len(registros)} registros de acesso encontrados")
-    return registros
+
+    registros = await RegistroAcesso.find(fetch_links=True).skip(skip).limit(limit).to_list()
+    
+    return [
+        RegistroAcessoPublic(
+            id=str(reg.id),
+            usuario_id=str(reg.usuario_id.id) if hasattr(reg.usuario_id, "id") else str(reg.usuario_id),
+            conjunto_dados=reg.conjunto_dados,
+            data_solicitacao=reg.data_solicitacao,
+            finalidade_uso=reg.finalidade_uso,
+            permissoes_concedidas=reg.permissoes_concedidas or [],
+            status=reg.status
+        )
+        for reg in registros
+    ]
+
+
+# ==========================
+# CRIAR UM NOVO REGISTRO DE ACESSO
+# ==========================
 
 @router.post("/", status_code=HTTPStatus.CREATED, response_model=RegistroAcessoPublic)
-def create_registro_acesso(registro: RegistroAcesso, session: Session = Depends(get_session)):
-    """
-    Creates a new access record (Registro de Acesso).
-    """
+async def create_registro_acesso(registro: RegistroAcessoSchema):
+    """Cria um novo registro de acesso"""
     logger.info("Tentativa de criação de um novo registro de acesso")
-    with session as session:
-        # Check if the record already exists
-        db_registro = session.scalar(
-            select(RegistroAcessoModel)
-            .where(
-                (RegistroAcessoModel.usuario_id == registro.usuario_id) &
-                (RegistroAcessoModel.conjunto_dados == registro.conjunto_dados) &
-                (RegistroAcessoModel.data_solicitacao == registro.data_solicitacao)
-            )
+
+    # Verifica se já existe um registro com os mesmos dados
+    db_registro = await RegistroAcesso.find_one(
+        RegistroAcesso.usuario_id == registro.usuario_id,
+        RegistroAcesso.conjunto_dados == registro.conjunto_dados,
+        RegistroAcesso.data_solicitacao == registro.data_solicitacao
+    )
+    if db_registro:
+        logger.warning("Registro de acesso já existe")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Registro de Acesso já existe para os critérios fornecidos"
         )
-        if db_registro:
-            logger.warning("Tentativa de criação de registro de acesso falhou: registro já existe")
-            raise HTTPException(
-                status_code=HTTPStatus.BAD_REQUEST,
-                detail="Registro de Acesso already exists for the given criteria",
-            )
 
-        # Create a new record
-        db_instance = RegistroAcessoModel(**registro.dict())
-        session.add(db_instance)
+    novo_registro = RegistroAcesso(**registro.dict())
+    await novo_registro.insert()
 
-        try:
-            session.commit()
-            session.refresh(db_instance)  # Refresh to get updated instance with ID
-            logger.info(f"Registro de acesso '{db_instance.id}' criado com sucesso")
-        except IntegrityError as e:
-            session.rollback()
-            logger.error(f"Erro ao inserir registro de acesso: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=HTTPStatus.BAD_REQUEST,
-                detail=f"Failed to insert Registro de Acesso: {e.orig.args if e.orig else str(e)}"
-            )
-
-    # Deserialize permissoes_concedidas if it's stored as a string
-    permissoes_concedidas = (
-        json.loads(db_instance.permissoes_concedidas)
-        if isinstance(db_instance.permissoes_concedidas, str)
-        else db_instance.permissoes_concedidas or []
-    )
-
-    # Return the created record using the response model
+    logger.info(f"Registro de acesso '{novo_registro.id}' criado com sucesso")
     return RegistroAcessoPublic(
-        id=db_instance.id,
-        usuario_id=db_instance.usuario_id,
-        conjunto_dados=db_instance.conjunto_dados,
-        data_solicitacao=db_instance.data_solicitacao,
-        finalidade_uso=db_instance.finalidade_uso,
-        permissoes_concedidas=permissoes_concedidas,
-        status=db_instance.status,
+        id=str(novo_registro.id),
+        usuario_id=str(novo_registro.usuario_id.id) if hasattr(novo_registro.usuario_id, "id") else str(novo_registro.usuario_id),
+        conjunto_dados=novo_registro.conjunto_dados,
+        data_solicitacao=novo_registro.data_solicitacao,
+        finalidade_uso=novo_registro.finalidade_uso,
+        permissoes_concedidas=novo_registro.permissoes_concedidas or [],
+        status=novo_registro.status
     )
 
+
+# ==========================
+# DELETAR UM REGISTRO DE ACESSO
+# ==========================
 
 @router.delete("/{registro_id}", status_code=HTTPStatus.NO_CONTENT)
-def delete_registro_acesso(registro_id: int, session: Session = Depends(get_session)):
+async def delete_registro_acesso(registro_id: str):
+    """Exclui um registro de acesso pelo ID"""
     logger.info(f"Tentativa de exclusão do registro de acesso com ID {registro_id}")
-    with session as session:
-        db_registro = session.scalar(select(RegistroAcessoModel).where(RegistroAcessoModel.id == registro_id))
-        if not db_registro:
-            logger.warning(f"Tentativa de exclusão falhou: registro de acesso com ID {registro_id} não encontrado")
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Registro de Acesso not found")
-        session.delete(db_registro)
-        try:
-            session.commit()
-            logger.info(f"Registro de acesso com ID {registro_id} excluído com sucesso")
-        except IntegrityError as e:
-            session.rollback()
-            logger.error(f"Erro ao excluir registro de acesso com ID {registro_id}: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=f"Registro de Acesso deletion failed: {str(e)}")
-    return {"message": "Registro de Acesso deleted successfully"}
 
-    #     session.commit()
-    # return {"message": "Registro de Acesso deleted successfully"}
+    db_registro = await RegistroAcesso.get(PydanticObjectId(registro_id))
+    if not db_registro:
+        logger.warning(f"Registro de acesso com ID {registro_id} não encontrado")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Registro de Acesso não encontrado")
 
+    await db_registro.delete()
+
+    logger.info(f"Registro de acesso com ID {registro_id} excluído com sucesso")
+    return {"message": "Registro de Acesso deletado com sucesso"}
+
+
+# ==========================
+# ATUALIZAR UM REGISTRO DE ACESSO
+# ==========================
 
 @router.put("/{registro_id}", status_code=HTTPStatus.OK, response_model=RegistroAcessoPublic)
-def update_registro_acesso(registro_id: int, registro: RegistroAcesso, session: Session = Depends(get_session)):
+async def update_registro_acesso(registro_id: str, registro: RegistroAcessoSchema):
+    """Atualiza um registro de acesso pelo ID"""
     logger.info(f"Tentativa de atualização do registro de acesso com ID {registro_id}")
-    with session as session:
-        db_registro = session.scalar(select(RegistroAcessoModel).where(RegistroAcessoModel.id == registro_id))
-        if not db_registro:
-            logger.warning(f"Tentativa de atualização falhou: registro de acesso com ID {registro_id} não encontrado")
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Registro de Acesso not found")
 
-        # Atualiza os dados do registro de acesso
-        update_data = registro.dict()
-        for key, value in update_data.items():
-            setattr(db_registro, key, value)
+    db_registro = await RegistroAcesso.get(PydanticObjectId(registro_id))
+    if not db_registro:
+        logger.warning(f"Registro de acesso com ID {registro_id} não encontrado")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Registro de Acesso não encontrado")
 
-        try:
-            session.commit()
-            logger.info(f"Registro de acesso com ID {registro_id} atualizado com sucesso")
-        except IntegrityError as e:
-            session.rollback()
-            logger.error(f"Erro ao atualizar registro de acesso com ID {registro_id}: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Registro de Acesso update failed")
+    update_data = {k: v for k, v in registro.dict().items() if v is not None}
+    await db_registro.set(update_data)
 
-        session.refresh(db_registro)
-
-    return db_registro
+    logger.info(f"Registro de acesso com ID {registro_id} atualizado com sucesso")
+    return RegistroAcessoPublic(
+        id=str(db_registro.id),
+        usuario_id=str(db_registro.usuario_id.id) if hasattr(db_registro.usuario_id, "id") else str(db_registro.usuario_id),
+        conjunto_dados=db_registro.conjunto_dados,
+        data_solicitacao=db_registro.data_solicitacao,
+        finalidade_uso=db_registro.finalidade_uso,
+        permissoes_concedidas=db_registro.permissoes_concedidas or [],
+        status=db_registro.status
+    )
 
 
+# ==========================
+# CONTAR REGISTROS DE ACESSO
+# ==========================
 
-
-@router.get("/registrosacesso", status_code=HTTPStatus.OK)
-def count_databases(session: Session = Depends(get_session)):
-    """
-    Endpoint para contar o número de registros na tabela 'registrosacesso'.
-    """
-    logger.info("Endpoint /registroacesso/registrosacesso acessado para contar registros")
-    quantidade = session.scalar(select(func.count()).select_from(RegistroAcessoModel))
+@router.get("/count", status_code=HTTPStatus.OK)
+async def count_registros_acesso():
+    """Conta o número total de registros de acesso"""
+    logger.info("Endpoint /registroacesso/count acessado")
+    quantidade = await RegistroAcesso.find().count()
     logger.info(f"Quantidade de registros de acesso: {quantidade}")
     return {"quantidade": quantidade}

@@ -1,239 +1,93 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import select
-from infogrid.database import get_session
-from infogrid.models import Responsavel, Database, Tabela, TopicoKafka
+from fastapi import APIRouter, HTTPException, Query
 from http import HTTPStatus
+import logging
+from typing import List, Optional
+from infogrid.models import Responsavel, Database, Tabela, TopicoKafka
 
-router = APIRouter(prefix='/api/v1/entidades', tags=['entidades'])
+logger = logging.getLogger("app_logger")
 
-# Endpoint para filtrar Responsaveis
+router = APIRouter(prefix="/api/v1/entidades", tags=["entidades"])
+
+
 @router.get("/responsaveis/", status_code=HTTPStatus.OK)
-def get_responsaveis(
-    nome: str = Query(None),
-    email: str = Query(None),
-    session: Session = Depends(get_session)
+async def get_responsaveis(
+    nome: Optional[str] = Query(None),
+    email: Optional[str] = Query(None),
 ):
-    stmt = select(Responsavel)
-    
+    """Filtra Responsáveis por nome ou email"""
+    query = {}
+
     if nome:
-        stmt = stmt.where(Responsavel.nome.ilike(f"%{nome}%"))
+        query["nome"] = {"$regex": nome, "$options": "i"}
     if email:
-        stmt = stmt.where(Responsavel.email.ilike(f"%{email}%"))
+        query["email"] = {"$regex": email, "$options": "i"}
 
-    result = session.execute(stmt).scalars().all()
-    if not result:
+    responsaveis = await Responsavel.find(query).to_list(100)
+
+    if not responsaveis:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Responsáveis não encontrados")
-    return result
 
-# Endpoint para filtrar Databases
+    return responsaveis
+
+
 @router.get("/databases/", status_code=HTTPStatus.OK)
-def get_databases(
-    nome: str = Query(None),
-    tecnologia: str = Query(None),
-    session: Session = Depends(get_session)
+async def get_databases(
+    nome: Optional[str] = Query(None),
+    tecnologia: Optional[str] = Query(None),
 ):
-    stmt = select(Database)
-    
+    """Filtra Bancos de Dados por nome ou tecnologia"""
+    query = {}
+
     if nome:
-        stmt = stmt.where(Database.nome.ilike(f"%{nome}%"))
+        query["nome"] = {"$regex": nome, "$options": "i"}
     if tecnologia:
-        stmt = stmt.where(Database.tecnologia.ilike(f"%{tecnologia}%"))
+        query["tecnologia"] = {"$regex": tecnologia, "$options": "i"}
 
-    result = session.execute(stmt).scalars().all()
-    if not result:
+    databases = await Database.find(query).to_list(100)
+
+    if not databases:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Databases não encontrados")
-    return result
 
-# Endpoint para filtrar Tabelas
+    return databases
+
+
 @router.get("/tabelas/", status_code=HTTPStatus.OK)
-def get_tabelas(
-    nome: str = Query(None),
-    descricao: str = Query(None),
-    session: Session = Depends(get_session)
+async def get_tabelas(
+    nome: Optional[str] = Query(None),
+    descricao: Optional[str] = Query(None),
 ):
-    stmt = select(Tabela)
-    
-    if nome:
-        stmt = stmt.where(Tabela.nome.ilike(f"%{nome}%"))
-    if descricao:
-        stmt = stmt.where(Tabela.descricao.ilike(f"%{descricao}%"))
+    """Filtra Tabelas por nome ou descrição"""
+    query = {}
 
-    result = session.execute(stmt).scalars().all()
-    if not result:
+    if nome:
+        query["nome"] = {"$regex": nome, "$options": "i"}
+    if descricao:
+        query["descricao"] = {"$regex": descricao, "$options": "i"}
+
+    tabelas = await Tabela.find(query).to_list(100)
+
+    if not tabelas:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Tabelas não encontradas")
-    return result
 
-# Endpoint para filtrar TopicosKafka
+    return tabelas
+
+
 @router.get("/topicos_kafka/", status_code=HTTPStatus.OK)
-def get_topicos_kafka(
-    nome: str = Query(None),
-    descricao: str = Query(None),
-    session: Session = Depends(get_session)
+async def get_topicos_kafka(
+    nome: Optional[str] = Query(None),
+    descricao: Optional[str] = Query(None),
 ):
-    stmt = select(TopicoKafka)
-    
+    """Filtra Tópicos Kafka por nome ou descrição"""
+    query = {}
+
     if nome:
-        stmt = stmt.where(TopicoKafka.nome.ilike(f"%{nome}%"))
+        query["nome"] = {"$regex": nome, "$options": "i"}
     if descricao:
-        stmt = stmt.where(TopicoKafka.descricao.ilike(f"%{descricao}%"))
+        query["descricao"] = {"$regex": descricao, "$options": "i"}
 
-    result = session.execute(stmt).scalars().all()
-    if not result:
+    topicos_kafka = await TopicoKafka.find(query).to_list(100)
+
+    if not topicos_kafka:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Tópicos Kafka não encontrados")
-    return result
 
-# from fastapi import APIRouter, HTTPException, Depends, Query
-# from sqlalchemy.orm import Session
-# from sqlalchemy import select, join
-# from infogrid.database import get_session
-# from infogrid.models import Responsavel, Database, Tabela, TopicoKafka, responsaveis_databases, responsaveis_tabelas, responsaveis_topicos_kafka
-# from http import HTTPStatus
-
-# router = APIRouter(prefix='/api/v1/entidades', tags=['entidades'])
-
-# # Endpoint para filtrar Responsaveis com Databases
-# @router.get("/responsaveis_databases/", status_code=HTTPStatus.OK)
-# def get_responsaveis_databases(
-#     responsavel_nome: str = Query(None),
-#     database_nome: str = Query(None),
-#     session: Session = Depends(get_session)
-# ):
-#     stmt = select(
-#         Responsavel.id, Responsavel.nome, Database.id, Database.nome
-#     ).select_from(
-#         join(responsaveis_databases, Responsavel, responsaveis_databases.c.responsavel_id == Responsavel.id)
-#     ).join(
-#         Database, responsaveis_databases.c.database_id == Database.id
-#     )
-
-#     if responsavel_nome:
-#         stmt = stmt.where(Responsavel.nome.ilike(f"%{responsavel_nome}%"))
-#     if database_nome:
-#         stmt = stmt.where(Database.nome.ilike(f"%{database_nome}%"))
-
-#     result = session.execute(stmt).fetchall()
-#     if not result:
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-#     return [{"responsavel_id": row[0], "responsavel_nome": row[1], "database_id": row[2], "database_nome": row[3]} for row in result]
-
-# # Endpoint para filtrar Responsaveis com Tabelas
-# @router.get("/responsaveis_tabelas/", status_code=HTTPStatus.OK)
-# def get_responsaveis_tabelas(
-#     responsavel_nome: str = Query(None),
-#     tabela_nome: str = Query(None),
-#     session: Session = Depends(get_session)
-# ):
-#     stmt = select(
-#         Responsavel.id, Responsavel.nome, Tabela.id, Tabela.nome
-#     ).select_from(
-#         join(responsaveis_tabelas, Responsavel, responsaveis_tabelas.c.responsavel_id == Responsavel.id)
-#     ).join(
-#         Tabela, responsaveis_tabelas.c.tabela_id == Tabela.id
-#     )
-
-#     if responsavel_nome:
-#         stmt = stmt.where(Responsavel.nome.ilike(f"%{responsavel_nome}%"))
-#     if tabela_nome:
-#         stmt = stmt.where(Tabela.nome.ilike(f"%{tabela_nome}%"))
-
-#     result = session.execute(stmt).fetchall()
-#     if not result:
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-#     return [{"responsavel_id": row[0], "responsavel_nome": row[1], "tabela_id": row[2], "tabela_nome": row[3]} for row in result]
-
-# # Endpoint para filtrar Responsaveis com TopicosKafka
-# @router.get("/responsaveis_topicos_kafka/", status_code=HTTPStatus.OK)
-# def get_responsaveis_topicos_kafka(
-#     responsavel_nome: str = Query(None),
-#     topico_kafka_nome: str = Query(None),
-#     session: Session = Depends(get_session)
-# ):
-#     stmt = select(
-#         Responsavel.id, Responsavel.nome, TopicoKafka.id, TopicoKafka.nome
-#     ).select_from(
-#         join(responsaveis_topicos_kafka, Responsavel, responsaveis_topicos_kafka.c.responsavel_id == Responsavel.id)
-#     ).join(
-#         TopicoKafka, responsaveis_topicos_kafka.c.topico_kafka_id == TopicoKafka.id
-#     )
-
-#     if responsavel_nome:
-#         stmt = stmt.where(Responsavel.nome.ilike(f"%{responsavel_nome}%"))
-#     if topico_kafka_nome:
-#         stmt = stmt.where(TopicoKafka.nome.ilike(f"%{topico_kafka_nome}%"))
-
-#     result = session.execute(stmt).fetchall()
-#     if not result:
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-#     return [{"responsavel_id": row[0], "responsavel_nome": row[1], "topico_kafka_id": row[2], "topico_kafka_nome": row[3]} for row in result]
-
-# # Endpoint para filtrar Databases com Tabelas
-# @router.get("/databases_tabelas/", status_code=HTTPStatus.OK)
-# def get_databases_tabelas(
-#     database_nome: str = Query(None),
-#     tabela_nome: str = Query(None),
-#     session: Session = Depends(get_session)
-# ):
-#     stmt = select(
-#         Database.id, Database.nome, Tabela.id, Tabela.nome
-#     ).select_from(
-#         join(responsaveis_databases, Database, responsaveis_databases.c.database_id == Database.id)
-#     ).join(
-#         responsaveis_tabelas, responsaveis_databases.c.responsavel_id == responsaveis_tabelas.c.responsavel_id
-#     ).join(
-#         Tabela, responsaveis_tabelas.c.tabela_id == Tabela.id
-#     )
-
-#     if database_nome:
-#         stmt = stmt.where(Database.nome.ilike(f"%{database_nome}%"))
-#     if tabela_nome:
-#         stmt = stmt.where(Tabela.nome.ilike(f"%{tabela_nome}%"))
-
-#     result = session.execute(stmt).fetchall()
-#     if not result:
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-#     return [{"database_id": row[0], "database_nome": row[1], "tabela_id": row[2], "tabela_nome": row[3]} for row in result]
-
-# # Endpoint para filtrar Responsaveis com Databases, Tabelas e TopicosKafka
-# @router.get("/responsaveis_completos/", status_code=HTTPStatus.OK)
-# def get_responsaveis_completos(
-#     responsavel_nome: str = Query(None),
-#     database_nome: str = Query(None),
-#     tabela_nome: str = Query(None),
-#     topico_kafka_nome: str = Query(None),
-#     session: Session = Depends(get_session)
-# ):
-#     stmt = select(
-#         Responsavel.id, Responsavel.nome, Database.id, Database.nome, Tabela.id, Tabela.nome, TopicoKafka.id, TopicoKafka.nome
-#     ).select_from(
-#         join(responsaveis_databases, Responsavel, responsaveis_databases.c.responsavel_id == Responsavel.id)
-#     ).join(
-#         Database, responsaveis_databases.c.database_id == Database.id
-#     ).join(
-#         responsaveis_tabelas, responsaveis_databases.c.responsavel_id == responsaveis_tabelas.c.responsavel_id
-#     ).join(
-#         Tabela, responsaveis_tabelas.c.tabela_id == Tabela.id
-#     ).join(
-#         responsaveis_topicos_kafka, responsaveis_databases.c.responsavel_id == responsaveis_topicos_kafka.c.responsavel_id
-#     ).join(
-#         TopicoKafka, responsaveis_topicos_kafka.c.topico_kafka_id == TopicoKafka.id
-#     )
-
-#     if responsavel_nome:
-#         stmt = stmt.where(Responsavel.nome.ilike(f"%{responsavel_nome}%"))
-#     if database_nome:
-#         stmt = stmt.where(Database.nome.ilike(f"%{database_nome}%"))
-#     if tabela_nome:
-#         stmt = stmt.where(Tabela.nome.ilike(f"%{tabela_nome}%"))
-#     if topico_kafka_nome:
-#         stmt = stmt.where(TopicoKafka.nome.ilike(f"%{topico_kafka_nome}%"))
-
-#     result = session.execute(stmt).fetchall()
-#     if not result:
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Relacionamentos não encontrados")
-#     return [{
-#         "responsavel_id": row[0], "responsavel_nome": row[1],
-#         "database_id": row[2], "database_nome": row[3],
-#         "tabela_id": row[4], "tabela_nome": row[5],
-#         "topico_kafka_id": row[6], "topico_kafka_nome": row[7]
-#     } for row in result]
+    return topicos_kafka

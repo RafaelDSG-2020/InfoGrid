@@ -1,125 +1,119 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 from http import HTTPStatus
 from typing import List
-from infogrid.database import get_session
-from infogrid.models import Coluna as ColunaModel
-from infogrid.schemas import Coluna, ColunaPublic
 import logging
+from beanie import PydanticObjectId
+from infogrid.models import Coluna, Tabela
+from infogrid.database import get_db
+from infogrid.schemas import Coluna as ColunaSchema, ColunaPublic
 
 logger = logging.getLogger("app_logger")
 
-router = APIRouter(prefix='/api/v1/coluna', tags=['coluna'])
+router = APIRouter(prefix="/api/v1/coluna", tags=["coluna"])
 
 
 @router.get("/", status_code=HTTPStatus.OK, response_model=List[ColunaPublic])
-def list_colunas(session: Session = Depends(get_session)):
+async def list_colunas():
+    """Lista todas as colunas"""
     logger.info("Endpoint /coluna acessado")
-    colunas = session.scalars(select(ColunaModel)).all()
-    logger.info(f"{len(colunas)} colunas encontradas")
-    return colunas
+    colunas = await Coluna.find().to_list(100)
+    return [
+        ColunaPublic(
+            id=str(col.id),
+            nome=col.nome,
+            tipo_dado=col.tipo_dado,
+            descricao=col.descricao,
+            tabela_id=str(col.tabela.ref.id) if col.tabela else None,  
+        )
+        for col in colunas
+    ]
 
 
 @router.get("/pagined/", status_code=HTTPStatus.OK, response_model=List[ColunaPublic])
-def list_colunas_paged(limit: int = 5, skip: int = 0, session: Session = Depends(get_session)):
+async def list_colunas_paged(limit: int = 5, skip: int = 0):
+    """Lista colunas com paginação"""
     logger.info(f"Endpoint /coluna/pagined acessado com limite {limit} e offset {skip}")
-    colunas = session.scalars(select(ColunaModel).limit(limit).offset(skip)).all()
-    logger.info(f"{len(colunas)} colunas encontradas")
-    return colunas
+    colunas = await Coluna.find().skip(skip).limit(limit).to_list()
+    return [
+        ColunaPublic(
+            id=str(col.id),
+            nome=col.nome,
+            tipo_dado=col.tipo_dado,
+            descricao=col.descricao,
+            tabela_id=str(col.tabela.ref.id) if col.tabela else None,  
+        )
+        for col in colunas
+    ]
 
 
-@router.post("/", status_code=HTTPStatus.CREATED, response_model=ColunaPublic)
-def create_coluna(coluna: Coluna, session: Session = Depends(get_session)):
-    """
-    Cria uma nova coluna
-    """
-    logger.info("Tentativa de criação de uma nova coluna")
-    with session as session:
-        db_coluna = session.scalar(select(ColunaModel).where(ColunaModel.nome == coluna.nome and ColunaModel.tabela_id == coluna.tabela_id))
-        if db_coluna:
-            logger.warning("Tentativa de criação de coluna falhou: coluna já existe")
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Coluna already exists")
+@router.post("/", status_code=HTTPStatus.CREATED, response_model=ColunaSchema)
+async def create_coluna(coluna: ColunaSchema, db=Depends(get_db)):
+    """Cria uma nova coluna"""
+    logger.info("Endpoint /coluna acessado para criação")
+    
+    # Verifique se a tabela existe
+    tabela = await Tabela.get(coluna.tabela_id)
+    if not tabela:
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Tabela não encontrada")
 
-        db_instance = ColunaModel(**coluna.dict())
-        session.add(db_instance)
-
-        try:
-            session.commit()
-            logger.info(f"Coluna '{db_instance.nome}' inserida com sucesso")
-        except IntegrityError:
-            session.rollback()
-            logger.error("Falha na inserção da coluna", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Coluna insertion failed")
-
-        session.refresh(db_instance)
-
-    return {
-        "id": db_instance.id,
-        "nome": db_instance.nome,
-        "tipo_dado": db_instance.tipo_dado,
-        "descricao": db_instance.descricao,
-        "tabela_id": db_instance.tabela_id,
-    }
-
+    nova_coluna = Coluna(
+        nome=coluna.nome,
+        tipo_dado=coluna.tipo_dado,
+        descricao=coluna.descricao,
+        tabela=tabela  # Fornecendo o campo tabela corretamente
+    )
+    await nova_coluna.insert()
+    return ColunaSchema(
+        id=str(nova_coluna.id),
+        nome=nova_coluna.nome,
+        tipo_dado=nova_coluna.tipo_dado,
+        descricao=nova_coluna.descricao,
+        tabela_id=str(nova_coluna.tabela.id)  # Incluindo o campo tabela_id na resposta
+    )
 
 @router.delete("/{coluna_id}", status_code=HTTPStatus.NO_CONTENT)
-def delete_coluna(coluna_id: int, session: Session = Depends(get_session)):
+async def delete_coluna(coluna_id: str):
+    """Exclui uma coluna pelo ID"""
     logger.info(f"Tentativa de exclusão da coluna com ID {coluna_id}")
-    with session as session:
-        db_coluna = session.scalar(select(ColunaModel).where(ColunaModel.id == coluna_id))
-        if not db_coluna:
-            logger.warning(f"Tentativa de exclusão falhou: coluna com ID {coluna_id} não encontrada")
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Coluna not found")
-        session.delete(db_coluna)
-        try:
-            session.commit()
-            logger.info(f"Coluna com ID {coluna_id} excluída com sucesso")
-        except IntegrityError:
-            session.rollback()
-            logger.error(f"Falha na exclusão da coluna com ID {coluna_id}", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Coluna deletion failed")
-    return {"message": "Coluna deleted successfully"}
 
-        # session.commit()
-    # return {"message": "Coluna deleted successfully"}
+    db_coluna = await Coluna.get(PydanticObjectId(coluna_id))
+    if not db_coluna:
+        logger.warning(f"Coluna com ID {coluna_id} não encontrada")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Coluna not found")
+
+    await db_coluna.delete()
+
+    logger.info(f"Coluna com ID {coluna_id} excluída com sucesso")
+    return {"message": "Coluna deleted successfully"}
 
 
 @router.put("/{coluna_id}", status_code=HTTPStatus.OK, response_model=ColunaPublic)
-def update_coluna(coluna_id: int, coluna: Coluna, session: Session = Depends(get_session)):
+async def update_coluna(coluna_id: str, coluna: ColunaSchema):
+    """Atualiza uma coluna pelo ID"""
     logger.info(f"Tentativa de atualização da coluna com ID {coluna_id}")
-    with session as session:
-        db_coluna = session.scalar(select(ColunaModel).where(ColunaModel.id == coluna_id))
-        if not db_coluna:
-            logger.warning(f"Tentativa de atualização falhou: coluna com ID {coluna_id} não encontrada")
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Coluna not found")
 
-        # Atualiza os dados da coluna
-        update_data = coluna.dict()
-        for key, value in update_data.items():
-            setattr(db_coluna, key, value)
+    db_coluna = await Coluna.get(PydanticObjectId(coluna_id))
+    if not db_coluna:
+        logger.warning(f"Coluna com ID {coluna_id} não encontrada")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Coluna not found")
 
-        try:
-            session.commit()
-            logger.info(f"Coluna com ID {coluna_id} atualizada com sucesso")
-        except IntegrityError:
-            session.rollback()
-            logger.error(f"Falha na atualização da coluna com ID {coluna_id}", exc_info=True)
-            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Coluna update failed")
+    update_data = {k: v for k, v in coluna.dict().items() if v is not None}
+    await db_coluna.set(update_data)
 
-        session.refresh(db_coluna)
-
-    return db_coluna
+    logger.info(f"Coluna com ID {coluna_id} atualizada com sucesso")
+    return ColunaPublic(
+        id=str(db_coluna.id),
+            nome=db_coluna.nome,
+            tipo_dado=db_coluna.tipo_dado,
+            descricao=db_coluna.descricao,
+            tabela_id=str(db_coluna.tabela.ref.id) if db_coluna.tabela else None,  # Acessando o ID corretamente
+    )
 
 
-
-@router.get("/colunas", status_code=HTTPStatus.OK)
-def count_databases(session: Session = Depends(get_session)):
-    """
-    Endpoint para contar o número de registros na tabela 'colunas'.
-    """
-    logger.info("Endpoint /coluna/colunas acessado para contar registros")
-    quantidade = session.scalar(select(func.count()).select_from(ColunaModel))
+@router.get("/count", status_code=HTTPStatus.OK)
+async def count_colunas():
+    """Conta o número total de colunas"""
+    logger.info("Endpoint /coluna/count acessado")
+    quantidade = await Coluna.find().count()
     logger.info(f"Quantidade de colunas: {quantidade}")
     return {"quantidade": quantidade}
