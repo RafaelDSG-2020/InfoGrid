@@ -3,12 +3,18 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
+# class PerfilUsuario(EmbeddedModel):
+#     idade: Optional[int]
+#     endereco: Optional[str]
+#     biografia: Optional[str]
+
 # Modelo de Usuário
 class Usuario(Document):
     nome: str
     email: str
     cargo: Optional[str]
     telefone: Optional[str]
+    # perfil: Optional[PerfilUsuario] 
 
     class Settings:
         collection = "usuarios"
@@ -25,15 +31,6 @@ class RegistroAcesso(Document):
     class Settings:
         collection = "registros_acesso"
 
-# Modelo de Database (Bancos de Dados)
-class Database(Document):
-    nome: str
-    tecnologia: str
-    descricao: Optional[str]
-    responsaveis: List[Link[Usuario]]  # Relacionamento com usuários
-
-    class Settings:
-        collection = "databases"
 
 class Responsavel(Document):
     nome: str
@@ -42,7 +39,18 @@ class Responsavel(Document):
     telefone: Optional[str]
 
     class Settings:
-        collection = "responsaveis"        
+        collection = "responsaveis"   
+
+# Modelo de Database (Bancos de Dados)
+class Database(Document):
+    nome: str
+    tecnologia: str
+    descricao: Optional[str]
+    responsaveis: List[Link[Responsavel]]  # Relacionamento com usuários
+
+    class Settings:
+        collection = "databases"
+     
 
 # Modelo de Tabela
 class Tabela(Document):

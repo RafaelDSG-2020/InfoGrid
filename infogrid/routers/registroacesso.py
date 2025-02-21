@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from http import HTTPStatus
-from typing import List
+from typing import List, Optional
 import logging
+from datetime import datetime
 from beanie import PydanticObjectId
 from infogrid.models import RegistroAcesso
 from infogrid.schemas import RegistroAcesso as RegistroAcessoSchema, RegistroAcessoPublic
@@ -158,3 +159,43 @@ async def count_registros_acesso():
     quantidade = await RegistroAcesso.find().count()
     logger.info(f"Quantidade de registros de acesso: {quantidade}")
     return {"quantidade": quantidade}
+
+
+@router.get("/filter-by-date/", status_code=HTTPStatus.OK)
+async def filter_registros_by_date(
+    start_date: Optional[str] = Query(None, description="Data inicial (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Data final (YYYY-MM-DD)"),
+    year: Optional[int] = Query(None, description="Ano específico (YYYY)")
+):
+    """
+    Filtra Registros de Acesso por intervalo de data ou por ano específico.
+    """
+    query = {}
+
+    try:
+        if start_date:
+            start_date = datetime.strptime(start_date, "%Y-%m-%d")
+        if end_date:
+            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+
+        if start_date and end_date:
+            query["data_solicitacao"] = {"$gte": start_date, "$lte": end_date}
+        elif start_date:
+            query["data_solicitacao"] = {"$gte": start_date}
+        elif end_date:
+            query["data_solicitacao"] = {"$lte": end_date}
+
+        if year:
+            start_of_year = datetime(year, 1, 1)
+            end_of_year = datetime(year, 12, 31, 23, 59, 59)
+            query["data_solicitacao"] = {"$gte": start_of_year, "$lte": end_of_year}
+
+        registros = await RegistroAcesso.find(query).to_list(100)
+
+        if not registros:
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Nenhum registro encontrado para o período informado.")
+
+        return registros
+
+    except ValueError:
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Formato de data inválido. Use YYYY-MM-DD.")

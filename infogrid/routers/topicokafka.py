@@ -172,3 +172,82 @@ async def count_topicos_kafka():
     quantidade = await TopicoKafkaModel.find().count()
     logger.info(f"Quantidade de tópicos Kafka: {quantidade}")
     return {"quantidade": quantidade}
+
+
+from bson import ObjectId, DBRef
+
+@router.get("/with-columns-responsaveis/", status_code=HTTPStatus.OK)
+async def list_kafka_topics_with_columns_and_responsaveis():
+    """Lista Tópicos Kafka, suas Colunas associadas e Responsáveis usando agregação"""
+    logger.info("Endpoint /api/v1/kafka/with-columns-responsaveis acessado")
+
+    pipeline = [
+        {
+            "$lookup": {
+                "from": "ColunaTopicoKafka",  # 🔹 Nome correto da coleção
+                "localField": "_id",  # ✅ Correto, pois '_id' é um ObjectId no TopicoKafka
+                "foreignField": "topico_kafka.$id",  # ✅ Agora resolve DBRef corretamente
+                "as": "colunas"
+            }
+        },
+        {
+            "$lookup": {
+                "from": "Responsavel",  # 🔹 Associando responsáveis corretamente
+                "localField": "responsaveis.$id",  # ✅ Correto para resolver DBRef
+                "foreignField": "_id",
+                "as": "responsaveis"
+            }
+        },
+        {
+            "$project": {  # 🔹 Organizando a estrutura final da resposta
+                "_id": 1,
+                "nome": 1,
+                "descricao": 1,
+                "estado_atual": 1,
+                "conformidade": 1,
+                "responsaveis": 1,
+                "colunas": {
+                    "$map": {
+                        "input": "$colunas",
+                        "as": "col",
+                        "in": {
+                            "_id": "$$col._id",
+                            "nome": "$$col.nome",
+                            "tipo_dado": "$$col.tipo_dado",
+                            "descricao": "$$col.descricao"
+                        }
+                    }
+                }  # 🔹 Remove o campo "topico_kafka" das colunas
+            }
+        }
+    ]
+
+    result = await TopicoKafkaModel.aggregate(pipeline).to_list(100)
+
+    if not result:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Nenhum Tópico Kafka encontrado")
+
+    # ✅ Converte ObjectId para string
+    def clean_objectid_dbref(obj):
+        """Converte ObjectId para string e remove DBRef."""
+        if isinstance(obj, ObjectId):
+            return str(obj)  # Converte ObjectId para string
+        if isinstance(obj, DBRef):
+            return str(obj.id)  # Extrai apenas o ObjectId do DBRef
+        if isinstance(obj, dict):
+            return {k: clean_objectid_dbref(v) for k, v in obj.items()}  # Converte recursivamente
+        if isinstance(obj, list):
+            return [clean_objectid_dbref(v) for v in obj]  # Converte listas recursivamente
+        return obj
+
+    result = clean_objectid_dbref(result)
+
+    return result
+
+@router.get("/topico-kafka/{topico_id}", status_code=HTTPStatus.OK)
+async def get_topico_kafka_by_id(topico_id: str):
+    """Busca um Tópico Kafka pelo ID"""
+    topico = await TopicoKafkaModel.get(PydanticObjectId(topico_id))
+    if not topico:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Tópico Kafka não encontrado")
+    return topico

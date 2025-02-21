@@ -117,3 +117,14 @@ async def count_colunas():
     quantidade = await Coluna.find().count()
     logger.info(f"Quantidade de colunas: {quantidade}")
     return {"quantidade": quantidade}
+
+
+@router.get("/coluna/{coluna_id}", status_code=HTTPStatus.OK)
+async def get_coluna_by_id(coluna_id: str):
+    """Busca uma Coluna pelo ID"""
+    coluna = await Coluna.get(PydanticObjectId(coluna_id))
+    if not coluna:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Coluna não encontrada")
+    return coluna
+
+

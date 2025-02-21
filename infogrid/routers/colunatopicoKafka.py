@@ -155,3 +155,12 @@ async def count_colunas_topico_kafka():
     quantidade = await ColunaTopicoKafka.find().count()
     logger.info(f"Quantidade de colunas de tópicos Kafka: {quantidade}")
     return {"quantidade": quantidade}
+
+
+@router.get("/coluna-topico-kafka/{coluna_topico_id}", status_code=HTTPStatus.OK)
+async def get_coluna_topico_kafka_by_id(coluna_topico_id: str):
+    """Busca uma Coluna de um Tópico Kafka pelo ID"""
+    coluna_topico = await ColunaTopicoKafka.get(PydanticObjectId(coluna_topico_id))
+    if not coluna_topico:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Coluna de Tópico Kafka não encontrada")
+    return coluna_topico

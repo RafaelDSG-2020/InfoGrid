@@ -133,3 +133,18 @@ class ResponsavelPublic(BaseModel):
     email: str
     cargo: Optional[str] = None
     telefone: Optional[str] = None
+
+
+
+
+# # 🔹 Modelo de Perfil do Usuário (usado dentro do Usuario)
+# class PerfilUsuarioSchema(BaseModel):
+#     idade: Optional[int]
+#     endereco: Optional[str]
+#     biografia: Optional[str]
+
+# # 🔹 Modelo para Atualizar o Perfil
+# class PerfilUsuarioUpdateSchema(BaseModel):
+#     idade: Optional[int] = None
+#     endereco: Optional[str] = None
+#     biografia: Optional[str] = None

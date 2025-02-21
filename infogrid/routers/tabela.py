@@ -166,3 +166,10 @@ async def count_tabelas():
     return {"quantidade": quantidade}
 
 
+@router.get("/tabela/{tabela_id}", status_code=HTTPStatus.OK)
+async def get_tabela_by_id(tabela_id: str):
+    """Busca uma Tabela pelo ID"""
+    tabela = await Tabela.get(PydanticObjectId(tabela_id))
+    if not tabela:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Tabela não encontrada")
+    return tabela
